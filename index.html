@@ -548,14 +548,72 @@ function mkIssue(issues){
 // ── COMMENTS ──
 async function loadComments(){
   try{
-    const bin=atob(CB64),bytes=new Uint8Array(bin.length);
-    for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
-    allC=JSON.parse(pako.ungzip(bytes,{to:'string'}));
-    document.getElementById('cLoading').style.display='none';
-    document.getElementById('tblWrap').style.display='block';
-    filterC();
-  }catch(e){document.getElementById('cLoading').innerHTML='<span style="color:var(--red)">Error: '+e.message+'</span>';}
+    const res = await fetch('comments.csv?v=' + Date.now(), {cache:'no-store'});
+    if(!res.ok) throw new Error('comments.csv not found, using embedded data');
+    const csvText = await res.text();
+    allC = csvToCommentRows(csvText);
+  }catch(csvErr){
+    try{
+      const bin=atob(CB64),bytes=new Uint8Array(bin.length);
+      for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
+      allC=JSON.parse(pako.ungzip(bytes,{to:'string'}));
+      console.warn(csvErr.message);
+    }catch(e){
+      document.getElementById('cLoading').innerHTML='<span style="color:var(--red)">Error: '+e.message+'</span>';
+      return;
+    }
+  }
+  document.getElementById('cLoading').style.display='none';
+  document.getElementById('tblWrap').style.display='block';
+  filterC();
 }
+
+function parseCSV(text){
+  const rows=[]; let row=[], val='', q=false;
+  for(let i=0;i<text.length;i++){
+    const ch=text[i], nx=text[i+1];
+    if(ch==='"' && q && nx==='"'){ val+='"'; i++; }
+    else if(ch==='"'){ q=!q; }
+    else if(ch===',' && !q){ row.push(val); val=''; }
+    else if((ch==='\n'||ch==='\r') && !q){
+      if(ch==='\r' && nx==='\n') i++;
+      row.push(val); val='';
+      if(row.some(x=>String(x).trim()!=='')) rows.push(row);
+      row=[];
+    } else val+=ch;
+  }
+  if(val || row.length){ row.push(val); if(row.some(x=>String(x).trim()!=='')) rows.push(row); }
+  return rows;
+}
+
+function csvToCommentRows(text){
+  const rows=parseCSV(text);
+  if(!rows.length) return [];
+  const header=rows.shift().map(h=>h.trim().toLowerCase().replace(/\s+/g,'_'));
+  const idx=(names)=>names.map(n=>header.indexOf(n)).find(i=>i>=0);
+  const iId=idx(['comment_id','commentid','id','video_id']);
+  const iTitle=idx(['title','show_title','content_title','series_title','video_title']);
+  const iDate=idx(['date','created_at','created_date','comment_date','published_at']);
+  const iComment=idx(['comment','comments','text','comment_text','review']);
+  const iSent=idx(['sentiment','sentiment_label']);
+  const iTags=idx(['tags','tag','topics','topic','category']);
+  const normSent=s=>{
+    const v=String(s||'').trim().toLowerCase();
+    if(v.startsWith('p')) return 'P';
+    if(v.startsWith('n')) return 'N';
+    if(v.startsWith('mix') || v==='m') return 'M';
+    return 'U';
+  };
+  return rows.map(r=>[
+    r[iId] || '',
+    r[iTitle] || '',
+    (r[iDate] || '').slice(0,10),
+    r[iComment] || '',
+    normSent(r[iSent]),
+    (r[iTags] || '').replace(/[,;]/g,'|')
+  ]).filter(r=>r[3]);
+}
+
 function filterC(){
   const title=document.getElementById('cf-title').value;
   const cid=document.getElementById('cf-id').value;
