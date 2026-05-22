@@ -324,7 +324,7 @@ td.left{text-align:left}
             <tr>
               <th class="left" style="width:170px">Show Title</th>
               <th class="left" style="width:130px">Show ID</th>
-              <th style="width:90px">Date</th>
+              <th style="width:90px;cursor:pointer;user-select:none" onclick="toggleDateSort()" title="Sort by date">Date <span id="dateSortIcon">↓</span></th>
               <th class="left">Comment</th>
               <th style="width:90px">Sentiment</th>
               <th class="left" style="width:200px">Tags</th>
@@ -348,6 +348,7 @@ const charts = {};
 let allC=[], filtC=[], curPage=1;
 const PER=50;
 let selTags=new Set();
+let dateSortDir='desc';
 let curTheme='light';
 
 // ── THEME ──
@@ -563,6 +564,8 @@ async function loadComments(){
       return;
     }
   }
+  const csvTags=[...new Set(allC.flatMap(c=>String(c[5]||'').split('|').filter(Boolean)))].sort();
+  if(csvTags.length) buildTagOpts(csvTags);
   document.getElementById('cLoading').style.display='none';
   document.getElementById('tblWrap').style.display='block';
   filterC();
@@ -605,8 +608,18 @@ function csvToCommentRows(text){
   const iTitle=idx(['show_title','title','content_title','series_title','story_title','book_title','video_title']);
   const iDate=idx(['date','created_at','created_date','comment_date','published_at','createdat','timestamp']);
   const iComment=idx(['comment','comments','text','comment_text','review','body','message']);
-  const iSent=idx(['sentiment','sentiment_label','sentiment_type','label']);
-  const iTags=idx(['tags','tag','topics','topic','category','issues','issue_tags']);
+  const iSent=idx(['overall_sentiment','sentiment','sentiment_label','sentiment_type','label']);
+  const iTags=idx(['tags','tag','topics','topic','category','categories','issues','issue_tags']);
+
+  // If there is no single Tags column, build tags from the CSV subcategory columns.
+  // Sample CSV has: Plot Sub Category, production_subcategory,
+  // Platform Sub Category, Technical Sub Category.
+  const tagSourceIdx=[
+    idx(['plot_sub_category','plot_subcategory','plot_category']),
+    idx(['production_subcategory','production_sub_category','production_category']),
+    idx(['platform_sub_category','platform_subcategory','platform_category']),
+    idx(['technical_sub_category','technical_subcategory','technical_category'])
+  ].filter(i=>i>=0);
 
   const titleToId=new Map((CD.showsList||[]).map(([t,id])=>[t,id]));
   const idToTitle=new Map((CD.showsList||[]).map(([t,id])=>[id,t]));
@@ -632,6 +645,20 @@ function csvToCommentRows(text){
     return v.slice(0,10);
   };
 
+  const normTag=s=>String(s||'')
+    .trim()
+    .toLowerCase()
+    .replace(/&/g,' and ')
+    .replace(/[^a-z0-9]+/g,'_')
+    .replace(/^_+|_+$/g,'');
+
+  const getTags=r=>{
+    const vals=[];
+    if(iTags>=0) vals.push(...String(r[iTags]||'').split(/[|;,]/));
+    tagSourceIdx.forEach(i=>vals.push(r[i]));
+    return [...new Set(vals.map(normTag).filter(Boolean))].join('|');
+  };
+
   const out=rows.map(r=>{
     let showId=iShowId>=0 ? String(r[iShowId]||'').trim() : '';
     let title=iTitle>=0 ? String(r[iTitle]||'').trim() : '';
@@ -645,7 +672,7 @@ function csvToCommentRows(text){
       cleanDate(iDate>=0 ? r[iDate] : ''),
       iComment>=0 ? String(r[iComment]||'') : '',
       normSent(iSent>=0 ? r[iSent] : ''),
-      iTags>=0 ? String(r[iTags]||'').replace(/[,;]/g,'|') : ''
+      getTags(r)
     ];
   }).filter(r=>r[3]);
 
@@ -653,6 +680,8 @@ function csvToCommentRows(text){
     headers: header,
     showIdColumn: iShowId>=0 ? header[iShowId] : '(not found)',
     titleColumn: iTitle>=0 ? header[iTitle] : '(not found)',
+    sentimentColumn: iSent>=0 ? header[iSent] : '(not found)',
+    tagsColumn: iTags>=0 ? header[iTags] : (tagSourceIdx.length ? tagSourceIdx.map(i=>header[i]).join(', ') : '(not found)'),
     commentIdColumnIgnored: iCommentId>=0 ? header[iCommentId] : '(not found)'
   });
 
@@ -676,7 +705,7 @@ function filterC(){
     if(tags.length){const s=c[5].split('|').filter(Boolean);if(!tags.some(t=>s.includes(t)))return false;}
     if(q&&!c[3].toLowerCase().includes(q)&&!c[1].toLowerCase().includes(q))return false;
     return true;
-  });
+  }).sort((a,b)=> dateSortDir==='asc' ? String(a[2]).localeCompare(String(b[2])) : String(b[2]).localeCompare(String(a[2])));
   curPage=1;
   document.getElementById('cf-cnt').textContent=filtC.length.toLocaleString('en-IN')+' comments';
   // Show active filter indicator
@@ -686,6 +715,12 @@ function filterC(){
   renderPage();
 }
 const sentMap={P:['Positive','b-pos'],N:['Negative','b-neg'],U:['Neutral','b-neu'],M:['Mixed','b-mix']};
+function toggleDateSort(){
+  dateSortDir = dateSortDir === 'asc' ? 'desc' : 'asc';
+  const icon=document.getElementById('dateSortIcon');
+  if(icon) icon.textContent = dateSortDir === 'asc' ? '↑' : '↓';
+  filterC();
+}
 function renderPage(){
   const sl=filtC.slice((curPage-1)*PER, curPage*PER);
   document.getElementById('cBody').innerHTML=sl.map(c=>{
