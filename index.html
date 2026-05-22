@@ -589,29 +589,74 @@ function parseCSV(text){
 function csvToCommentRows(text){
   const rows=parseCSV(text);
   if(!rows.length) return [];
-  const header=rows.shift().map(h=>h.trim().toLowerCase().replace(/\s+/g,'_'));
+
+  const header=rows.shift().map(h=>String(h||'').trim().toLowerCase().replace(/\s+/g,'_'));
   const idx=(names)=>names.map(n=>header.indexOf(n)).find(i=>i>=0);
-  const iId=idx(['comment_id','commentid','id','video_id']);
-  const iTitle=idx(['title','show_title','content_title','series_title','video_title']);
-  const iDate=idx(['date','created_at','created_date','comment_date','published_at']);
-  const iComment=idx(['comment','comments','text','comment_text','review']);
-  const iSent=idx(['sentiment','sentiment_label']);
-  const iTags=idx(['tags','tag','topics','topic','category']);
+
+  // IMPORTANT: c[0] is used everywhere as SHOW ID, not comment_id.
+  // The earlier version preferred comment_id/id here, so the Show ID filter compared
+  // dropdown show IDs against comment IDs and returned 0 rows.
+  const iShowId=idx([
+    'show_id','showid','show_uuid','showid_hex','series_id','seriesid',
+    'content_id','contentid','story_id','storyid','book_id','bookid',
+    'entity_id','entityid','podcast_id','podcastid'
+  ]);
+  const iCommentId=idx(['comment_id','commentid','comment_uuid','id']);
+  const iTitle=idx(['show_title','title','content_title','series_title','story_title','book_title','video_title']);
+  const iDate=idx(['date','created_at','created_date','comment_date','published_at','createdat','timestamp']);
+  const iComment=idx(['comment','comments','text','comment_text','review','body','message']);
+  const iSent=idx(['sentiment','sentiment_label','sentiment_type','label']);
+  const iTags=idx(['tags','tag','topics','topic','category','issues','issue_tags']);
+
+  const titleToId=new Map((CD.showsList||[]).map(([t,id])=>[t,id]));
+  const idToTitle=new Map((CD.showsList||[]).map(([t,id])=>[id,t]));
+
   const normSent=s=>{
     const v=String(s||'').trim().toLowerCase();
-    if(v.startsWith('p')) return 'P';
-    if(v.startsWith('n')) return 'N';
-    if(v.startsWith('mix') || v==='m') return 'M';
+    if(v==='p'||v.startsWith('pos')) return 'P';
+    if(v==='n'||v.startsWith('neg')) return 'N';
+    if(v==='m'||v.startsWith('mix')) return 'M';
     return 'U';
   };
-  return rows.map(r=>[
-    r[iId] || '',
-    r[iTitle] || '',
-    (r[iDate] || '').slice(0,10),
-    r[iComment] || '',
-    normSent(r[iSent]),
-    (r[iTags] || '').replace(/[,;]/g,'|')
-  ]).filter(r=>r[3]);
+
+  const cleanDate=s=>{
+    const v=String(s||'').trim();
+    const iso=v.match(/\d{4}-\d{2}-\d{2}/);
+    if(iso) return iso[0];
+    const dmy=v.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+    if(dmy){
+      const dd=dmy[1].padStart(2,'0'), mm=dmy[2].padStart(2,'0');
+      const yy=dmy[3].length===2?'20'+dmy[3]:dmy[3];
+      return `${yy}-${mm}-${dd}`;
+    }
+    return v.slice(0,10);
+  };
+
+  const out=rows.map(r=>{
+    let showId=iShowId>=0 ? String(r[iShowId]||'').trim() : '';
+    let title=iTitle>=0 ? String(r[iTitle]||'').trim() : '';
+
+    if(!showId && title && titleToId.has(title)) showId=titleToId.get(title);
+    if(!title && showId && idToTitle.has(showId)) title=idToTitle.get(showId);
+
+    return [
+      showId,
+      title,
+      cleanDate(iDate>=0 ? r[iDate] : ''),
+      iComment>=0 ? String(r[iComment]||'') : '',
+      normSent(iSent>=0 ? r[iSent] : ''),
+      iTags>=0 ? String(r[iTags]||'').replace(/[,;]/g,'|') : ''
+    ];
+  }).filter(r=>r[3]);
+
+  console.info(`Loaded ${out.length.toLocaleString('en-IN')} rows from comments.csv`, {
+    headers: header,
+    showIdColumn: iShowId>=0 ? header[iShowId] : '(not found)',
+    titleColumn: iTitle>=0 ? header[iTitle] : '(not found)',
+    commentIdColumnIgnored: iCommentId>=0 ? header[iCommentId] : '(not found)'
+  });
+
+  return out;
 }
 
 function filterC(){
